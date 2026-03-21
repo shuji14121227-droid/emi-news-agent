@@ -7,36 +7,43 @@ def run():
     api_key = os.environ.get("GEMINI_API_KEY")
     client = genai.Client(api_key=api_key)
     
-    # 検索クエリをより確実に（半導体エッチング関連）
+    # 論文の検索（クエリを絞る）
     search = arxiv.Search(
-        query='all:"Neutral Beam Etching" OR all:"Atomic Layer Etching"',
+        query='all:"Atomic Layer Etching" OR all:"Neutral Beam Etching"',
         max_results=3,
         sort_by=arxiv.SortCriterion.SubmittedDate
     )
     
     report = f"# 🔬 半導体最新論文レポート ({datetime.now().strftime('%Y-%m-%d %H:%M')})\n\n"
     
+    # Google APIが受け付ける可能性のある「名前」のリスト
+    # 2026年時点で最も安定している順に並べています
+    model_names = ['gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-2.0-flash']
+    
     papers = list(search.results())
     
     for paper in papers:
-        print(f"Analyzing: {paper.title}")
-        prompt = f"以下の論文を読み、技術革新のポイントとビジネスへの影響を日本語で3つの箇条書きで解説してください。\n\nTitle: {paper.title}\nAbstract: {paper.summary}"
+        prompt = f"以下の論文を読み、技術革新のポイントを日本語で要約してください。\n\nTitle: {paper.title}\nAbstract: {paper.summary}"
+        summary_text = ""
         
-        try:
-            # モデル名をフルパス 'models/gemini-1.5-flash' に変更
-            response = client.models.generate_content(
-                model='models/gemini-1.5-flash', 
-                contents=prompt
-            )
-            report += f"## {paper.title}\n- **URL**: {paper.entry_id}\n- **AI解析**: \n{response.text}\n\n---\n"
-        except Exception as e:
-            # 具体的なエラー内容をログに残す
-            print(f"Gemini API Error: {e}")
-            report += f"## {paper.title}\n- **URL**: {paper.entry_id}\n- **エラー**: 解析中に問題が発生しました（{str(e)[:50]}...）\n\n---\n"
+        # 成功するまでモデル名を切り替えて試行
+        for m_name in model_names:
+            try:
+                response = client.models.generate_content(
+                    model=m_name,
+                    contents=prompt
+                )
+                summary_text = response.text
+                break # 成功したらループを抜ける
+            except Exception as e:
+                print(f"Model {m_name} failed: {e}")
+                summary_text = f"解析エラー（{m_name}）"
+        
+        report += f"## {paper.title}\n- **URL**: {paper.entry_id}\n- **AI解析**: \n{summary_text}\n\n---\n"
     
     with open("README.md", "w", encoding="utf-8") as f:
         f.write(report)
-    print("Update complete.")
+    print("Update finished.")
 
 if __name__ == "__main__":
     run()
