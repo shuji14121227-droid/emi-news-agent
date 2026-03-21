@@ -7,26 +7,7 @@ def run():
     api_key = os.environ.get("GEMINI_API_KEY")
     client = genai.Client(api_key=api_key)
     
-    # 1. あなたのキーで「今使えるモデル」をリストアップして、動くものを自動選択
-    print("Checking available models...")
-    available_models = []
-    for m in client.models.list():
-        # 'generateContent'ができるモデルだけを抽出
-        if 'generateContent' in m.supported_variants:
-            available_models.append(m.name)
-    
-    print(f"Available models: {available_models}")
-    
-    # 優先順位をつけてモデルを選択（flash系は速くて無料枠に強い）
-    target_model = 'gemini-1.5-flash' # デフォルト
-    for preferred in ['gemini-1.5-flash', 'models/gemini-1.5-flash', 'gemini-2.0-flash']:
-        if preferred in available_models:
-            target_model = preferred
-            break
-            
-    print(f"Selected model: {target_model}")
-    
-    # 2. 論文検索
+    # 検索（クエリを絞る）
     search = arxiv.Search(
         query='all:"Atomic Layer Etching" OR all:"Neutral Beam Etching"',
         max_results=3,
@@ -34,19 +15,28 @@ def run():
     )
     
     report = f"# 🔬 半導体最新論文レポート ({datetime.now().strftime('%Y-%m-%d %H:%M')})\n\n"
-    report += f"> **使用AIモデル:** `{target_model}`\n\n"
     
-    for paper in list(search.results()):
-        prompt = f"以下の半導体関連の論文を読み、技術的なポイントを日本語で要約してください。\n\nTitle: {paper.title}\nAbstract: {paper.summary}"
+    papers = list(search.results())
+    
+    # 2026年に確実に動くモデル名の候補
+    candidates = ['gemini-1.5-flash', 'models/gemini-1.5-flash', 'gemini-2.0-flash']
+    
+    for paper in papers:
+        prompt = f"以下の半導体論文を日本語で要約して：\n\nTitle: {paper.title}\nAbstract: {paper.summary}"
+        summary = "解析失敗"
         
-        try:
-            response = client.models.generate_content(
-                model=target_model,
-                contents=prompt
-            )
-            summary = response.text
-        except Exception as e:
-            summary = f"解析に失敗しました。エラー内容: {str(e)[:100]}"
+        # 候補を一つずつ試す
+        for model_id in candidates:
+            try:
+                response = client.models.generate_content(
+                    model=model_id,
+                    contents=prompt
+                )
+                if response.text:
+                    summary = response.text
+                    break # 成功したら次の論文へ
+            except:
+                continue # ダメなら次の名前を試す
         
         report += f"## {paper.title}\n- **URL**: {paper.entry_id}\n- **AI解析**: \n{summary}\n\n---\n"
     
