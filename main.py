@@ -20,8 +20,8 @@ def run():
         summary = ""
         error_msg = ""
         
-        # 確実に存在するモデル名を試す
-        for model_name in ['gemini-2.0-flash', 'gemini-1.5-flash']:
+        # 2026年新規アカウント向けの最新モデル名
+        for model_name in ['gemini-3.0-flash', 'gemini-2.5-flash', 'gemini-3.1-flash']:
             try:
                 response = client.models.generate_content(
                     model=model_name,
@@ -31,12 +31,10 @@ def run():
                     summary = response.text
                     break
             except Exception as e:
-                # 失敗した理由を記録しておく
-                error_msg += f"({model_name}の失敗理由: {e}) "
+                error_msg += f"({model_name}失敗: {e}) "
                 
-        # もし全部失敗したら、エラーの理由をそのまま表示する
         if not summary:
-            summary = f"⚠️要約できませんでした。原因はこちらです👉 {error_msg}"
+            summary = f"⚠️要約できませんでした。原因👉 {error_msg}"
             
         report += f"## {paper.title}\n- **URL**: {paper.entry_id}\n- **AI解析**: \n{summary}\n\n---\n"
     
