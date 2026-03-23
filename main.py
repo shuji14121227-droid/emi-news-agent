@@ -4,10 +4,21 @@ import os
 from datetime import datetime
 import html
 import re
+from urllib import parse, request
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
 DATE_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+RSS_GOOGLE_URL = (
+    "https://news.google.com/rss/search?q="
+    + parse.quote("半導体 OR semiconductor OR chip industry when:1d")
+    + "&hl=ja&gl=JP&ceid=JP:ja"
+)
+RSS_FEEDS = [
+    {"name": "Google News", "url": RSS_GOOGLE_URL, "max_items": 6},
+    {"name": "IEEE Spectrum", "url": "https://spectrum.ieee.org/feeds/feed.rss", "max_items": 6},
+]
 
 
 def get_archive_dates(archive_dir: Path) -> list[str]:
@@ -21,13 +32,57 @@ def get_archive_dates(archive_dir: Path) -> list[str]:
     return dates
 
 
-def build_card_html(p: dict) -> str:
+def fetch_rss_entries(source_name: str, feed_url: str, max_items: int) -> list[dict]:
+    try:
+        req = request.Request(
+            feed_url,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; emi-news-agent/1.0)"},
+        )
+        with request.urlopen(req, timeout=20) as response:
+            body = response.read()
+    except Exception as e:
+        print(f"RSS取得失敗: {source_name} ({e})")
+        return []
+
+    try:
+        root = ET.fromstring(body)
+    except Exception as e:
+        print(f"RSS解析失敗: {source_name} ({e})")
+        return []
+
+    entries: list[dict] = []
+    for item in root.findall(".//item")[:max_items]:
+        title = (item.findtext("title") or "").strip()
+        link = (item.findtext("link") or "").strip()
+        description = (item.findtext("description") or "").strip()
+        published = (
+            item.findtext("pubDate")
+            or item.findtext("{http://purl.org/dc/elements/1.1/}date")
+            or ""
+        ).strip()
+
+        if not title or not link:
+            continue
+
+        entries.append(
+            {
+                "title": title,
+                "url": link,
+                "summary": description if description else "概要なし",
+                "source": source_name,
+                "published": published,
+            }
+        )
+
+    return entries
+
+
+def build_paper_card_html(p: dict) -> str:
     title = html.escape(str(p["title"]))
     url_raw = str(p["url"])
     url = html.escape(url_raw, quote=True)
     summary = html.escape(str(p["summary"]))
 
-    # URL文字列も画面に表示しつつ、クリックでも飛べるようにしてます。
     return f"""<article class="card">
   <h2 class="card__title">{title}</h2>
   <div class="card__meta">
@@ -44,37 +99,93 @@ def build_card_html(p: dict) -> str:
 </article>"""
 
 
-def build_archive_page_html(papers: list[dict], date_str: str, generated_at: str, css_href: str) -> str:
-    if papers:
-        cards_html = "\n".join(build_card_html(p) for p in papers)
-        cards_section = f"""<section class="grid" aria-label="論文一覧">
-  {cards_html}
+def build_news_card_html(n: dict) -> str:
+    title = html.escape(str(n["title"]))
+    url_raw = str(n["url"])
+    url = html.escape(url_raw, quote=True)
+    summary = html.escape(str(n["summary"]))
+    source = html.escape(str(n.get("source", "RSS")))
+    published = html.escape(str(n.get("published", "")))
+
+    return f"""<article class="card card--news">
+  <h2 class="card__title">{title}</h2>
+  <div class="card__meta-row">
+    <span class="badge">{source}</span>
+    <span class="published">{published}</span>
+  </div>
+  <div class="card__meta">
+    <a class="card__link" href="{url}" target="_blank" rel="noopener noreferrer">ニュースを開く</a>
+    <p class="card__url">
+      <span class="card__url-label">URL</span>:
+      <a class="card__url-link" href="{url}" target="_blank" rel="noopener noreferrer">{html.escape(url_raw)}</a>
+    </p>
+  </div>
+  <details class="card__details">
+    <summary class="card__details-summary">概要</summary>
+    <div class="card__summary">{summary}</div>
+  </details>
+</article>"""
+
+
+def build_two_sections_html(news_items: list[dict], papers: list[dict]) -> str:
+    if news_items:
+        news_cards_html = "\n".join(build_news_card_html(n) for n in news_items)
+        news_section = f"""<section aria-label="業界ニュース">
+  <h2 class="section-title">📰 今日の業界ニュース（Google等）</h2>
+  <div class="grid">
+    {news_cards_html}
+  </div>
 </section>"""
     else:
-        cards_section = """<section class="empty">
-  <h2 class="empty__title">この日は新しい論文がありませんでした</h2>
-  <p class="empty__text">次回の更新をお待ちください。</p>
+        news_section = """<section aria-label="業界ニュース">
+  <h2 class="section-title">📰 今日の業界ニュース（Google等）</h2>
+  <div class="empty">
+    <p class="empty__text">ニュースはまだ取得できていません。</p>
+  </div>
 </section>"""
 
+    if papers:
+        papers_cards_html = "\n".join(build_paper_card_html(p) for p in papers)
+        papers_section = f"""<section aria-label="最新論文">
+  <h2 class="section-title">🎓 今日の最新論文（arXiv等）</h2>
+  <div class="grid">
+    {papers_cards_html}
+  </div>
+</section>"""
+    else:
+        papers_section = """<section aria-label="最新論文">
+  <h2 class="section-title">🎓 今日の最新論文（arXiv等）</h2>
+  <div class="empty">
+    <p class="empty__text">今日は新しい論文がありませんでした。</p>
+  </div>
+</section>"""
+
+    return f"""{news_section}
+
+{papers_section}"""
+
+
+def build_archive_page_html(news_items: list[dict], papers: list[dict], date_str: str, generated_at: str, css_href: str) -> str:
+    body_sections = build_two_sections_html(news_items, papers)
     return f"""<!doctype html>
 <html lang="ja">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>半導体最新論文 - {html.escape(date_str)}</title>
+    <title>半導体ニュース＆論文 - {html.escape(date_str)}</title>
     <link rel="stylesheet" href="{css_href}" />
   </head>
   <body>
     <header class="site-header">
       <div class="container">
-        <a class="back-link" href="../index.html">← トップへ</a>
-        <h1 class="title">🔬 {html.escape(date_str)} の半導体最新論文</h1>
-        <p class="subtitle">生成日時: {html.escape(generated_at)} / 新規: {len(papers)}件</p>
+        <a class="back-link" href="../../index.html">← トップへ</a>
+        <h1 class="title">🔬 {html.escape(date_str)} の半導体トピック</h1>
+        <p class="subtitle">生成日時: {html.escape(generated_at)} / ニュース: {len(news_items)}件 / 論文: {len(papers)}件</p>
       </div>
     </header>
 
     <main class="container">
-      {cards_section}
+      {body_sections}
     </main>
 
     <footer class="site-footer">
@@ -87,21 +198,12 @@ def build_archive_page_html(papers: list[dict], date_str: str, generated_at: str
 
 
 def build_root_index_html(
+    today_news: list[dict],
     today_papers: list[dict],
     generated_at: str,
     archive_dates: list[str],
 ) -> str:
-    if today_papers:
-        cards_html = "\n".join(build_card_html(p) for p in today_papers)
-        today_section = f"""<section class="grid" aria-label="今日の論文一覧">
-  {cards_html}
-</section>"""
-    else:
-        today_section = """<section class="empty">
-  <h2 class="empty__title">今日は新しい論文がありませんでした</h2>
-  <p class="empty__text">過去の日付から確認できます。</p>
-</section>"""
-
+    two_sections = build_two_sections_html(today_news, today_papers)
     if archive_dates:
         archive_items = "\n".join(
             f"""<a class="archive-item" href="archive/{d}/index.html">{d}</a>"""
@@ -115,22 +217,22 @@ def build_root_index_html(
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>半導体最新論文レポート</title>
+    <title>半導体ニュース＆論文レポート</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <header class="site-header">
       <div class="container">
-        <h1 class="title">🔬 半導体最新論文レポート</h1>
-        <p class="subtitle">生成日時: {html.escape(generated_at)} / 新規: {len(today_papers)}件</p>
+        <h1 class="title">🔬 半導体ニュース＆論文レポート</h1>
+        <p class="subtitle">生成日時: {html.escape(generated_at)} / ニュース: {len(today_news)}件 / 論文: {len(today_papers)}件</p>
       </div>
     </header>
 
     <main class="container">
-      {today_section}
+      {two_sections}
 
       <section class="archive-section" aria-label="過去の日付">
-        <h2 class="section-title">過去のアーカイブ（例: 2026-03-22）</h2>
+        <h2 class="section-title">過去のアーカイブ</h2>
         <div class="archive-list">
           {archive_items}
         </div>
@@ -158,7 +260,13 @@ def run():
     else:
         processed_ids = set()
 
-    # 2. 論文検索（最新5件を取得）
+    # 2. ニュース取得（Google/IEEE RSS）
+    today_news: list[dict] = []
+    for feed in RSS_FEEDS:
+        entries = fetch_rss_entries(feed["name"], feed["url"], feed["max_items"])
+        today_news.extend(entries)
+
+    # 3. 論文検索（最新5件を取得）
     search = arxiv.Search(
         query='all:"Atomic Layer Etching" OR all:"Neutral Beam Etching"',
         max_results=5,
@@ -167,7 +275,7 @@ def run():
     
     new_papers = []
     
-    # 3. 新しい論文の抽出とAI要約
+    # 4. 新しい論文の抽出とAI要約
     for paper in list(search.results()):
         # すでに履歴（processed_ids）にあるURLならスキップ
         if paper.entry_id in processed_ids:
@@ -209,26 +317,26 @@ def run():
     archive_dir = Path("archive") / date_str
     archive_dir.mkdir(parents=True, exist_ok=True)
 
-    # 4. 日付ごとのページを生成
-    archive_index_html = build_archive_page_html(new_papers, date_str, generated_at, "../styles.css")
-    with open(archive_dir / "index.html", "w", encoding="utf-8") as f:
-        f.write(archive_index_html)
-
     # 5. ルートのトップページを生成（過去アーカイブへの導線）
     archive_dates = get_archive_dates(Path("archive"))
-    index_html = build_root_index_html(new_papers, generated_at, archive_dates)
+    index_html = build_root_index_html(today_news, new_papers, generated_at, archive_dates)
     with open("index.html", "w", encoding="utf-8") as f:
         f.write(index_html)
+
+    # 6. 日付ごとのページを生成
+    archive_index_html = build_archive_page_html(today_news, new_papers, date_str, generated_at, "../../styles.css")
+    with open(archive_dir / "index.html", "w", encoding="utf-8") as f:
+        f.write(archive_index_html)
 
     if not new_papers:
         print("今日は新しい論文がありませんでした（アーカイブページは作成済み）。")
         return
 
-    # 6. 新しい履歴を保存
+    # 7. 新しい履歴を保存
     with open(history_file, "w", encoding="utf-8") as f:
         f.write("\n".join(processed_ids))
         
-    print("🎉 index.html / archive と履歴の更新が完了しました！")
+    print("🎉 ニュース＋論文の index.html / archive と履歴の更新が完了しました！")
 
 if __name__ == "__main__":
     run()
