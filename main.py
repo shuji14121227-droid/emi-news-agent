@@ -3,33 +3,78 @@ from google import genai
 import os
 from datetime import datetime
 import html
+import re
 from pathlib import Path
 
 
-def build_index_html(new_papers: list[dict], generated_at: str) -> str:
-    # Insert model output as escaped text so it cannot break the generated HTML.
-    if not new_papers:
-        return f"""<!doctype html>
+DATE_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def get_archive_dates(archive_dir: Path) -> list[str]:
+    if not archive_dir.exists():
+        return []
+    dates: list[str] = []
+    for child in archive_dir.iterdir():
+        if child.is_dir() and DATE_DIR_RE.match(child.name):
+            dates.append(child.name)
+    dates.sort(reverse=True)
+    return dates
+
+
+def build_card_html(p: dict) -> str:
+    title = html.escape(str(p["title"]))
+    url_raw = str(p["url"])
+    url = html.escape(url_raw, quote=True)
+    summary = html.escape(str(p["summary"]))
+
+    # URL文字列も画面に表示しつつ、クリックでも飛べるようにしてます。
+    return f"""<article class="card">
+  <h2 class="card__title">{title}</h2>
+  <div class="card__meta">
+    <a class="card__link" href="{url}" target="_blank" rel="noopener noreferrer">arXivを開く</a>
+    <p class="card__url">
+      <span class="card__url-label">URL</span>:
+      <a class="card__url-link" href="{url}" target="_blank" rel="noopener noreferrer">{html.escape(url_raw)}</a>
+    </p>
+  </div>
+  <details class="card__details" open>
+    <summary class="card__details-summary">AI解析（要約）</summary>
+    <div class="card__summary">{summary}</div>
+  </details>
+</article>"""
+
+
+def build_archive_page_html(papers: list[dict], date_str: str, generated_at: str, css_href: str) -> str:
+    if papers:
+        cards_html = "\n".join(build_card_html(p) for p in papers)
+        cards_section = f"""<section class="grid" aria-label="論文一覧">
+  {cards_html}
+</section>"""
+    else:
+        cards_section = """<section class="empty">
+  <h2 class="empty__title">この日は新しい論文がありませんでした</h2>
+  <p class="empty__text">次回の更新をお待ちください。</p>
+</section>"""
+
+    return f"""<!doctype html>
 <html lang="ja">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>半導体最新論文レポート</title>
-    <link rel="stylesheet" href="styles.css" />
+    <title>半導体最新論文 - {html.escape(date_str)}</title>
+    <link rel="stylesheet" href="{css_href}" />
   </head>
   <body>
     <header class="site-header">
       <div class="container">
-        <h1 class="title">🔬 半導体最新論文レポート</h1>
-        <p class="subtitle">生成日時: {html.escape(generated_at)}</p>
+        <a class="back-link" href="../index.html">← トップへ</a>
+        <h1 class="title">🔬 {html.escape(date_str)} の半導体最新論文</h1>
+        <p class="subtitle">生成日時: {html.escape(generated_at)} / 新規: {len(papers)}件</p>
       </div>
     </header>
 
     <main class="container">
-      <section class="empty">
-        <h2 class="empty__title">今日は新しい論文がありませんでした</h2>
-        <p class="empty__text">次回実行をお待ちください。</p>
-      </section>
+      {cards_section}
     </main>
 
     <footer class="site-footer">
@@ -40,25 +85,31 @@ def build_index_html(new_papers: list[dict], generated_at: str) -> str:
   </body>
 </html>"""
 
-    cards = []
-    for p in new_papers:
-        title = html.escape(str(p["title"]))
-        url = html.escape(str(p["url"]), quote=True)
-        summary = html.escape(str(p["summary"]))
 
-        cards.append(
-            f"""<article class="card">
-  <h2 class="card__title">{title}</h2>
-  <a class="card__link" href="{url}" target="_blank" rel="noopener noreferrer">arXivを開く</a>
-  <details class="card__details" open>
-    <summary class="card__details-summary">AI解析（要約）</summary>
-    <div class="card__summary">{summary}</div>
-  </details>
-</article>"""
+def build_root_index_html(
+    today_papers: list[dict],
+    generated_at: str,
+    archive_dates: list[str],
+) -> str:
+    if today_papers:
+        cards_html = "\n".join(build_card_html(p) for p in today_papers)
+        today_section = f"""<section class="grid" aria-label="今日の論文一覧">
+  {cards_html}
+</section>"""
+    else:
+        today_section = """<section class="empty">
+  <h2 class="empty__title">今日は新しい論文がありませんでした</h2>
+  <p class="empty__text">過去の日付から確認できます。</p>
+</section>"""
+
+    if archive_dates:
+        archive_items = "\n".join(
+            f"""<a class="archive-item" href="archive/{d}/index.html">{d}</a>"""
+            for d in archive_dates
         )
+    else:
+        archive_items = """<p class="empty__text">アーカイブはまだありません。</p>"""
 
-    count = len(new_papers)
-    cards_html = "\n".join(cards)
     return f"""<!doctype html>
 <html lang="ja">
   <head>
@@ -71,13 +122,18 @@ def build_index_html(new_papers: list[dict], generated_at: str) -> str:
     <header class="site-header">
       <div class="container">
         <h1 class="title">🔬 半導体最新論文レポート</h1>
-        <p class="subtitle">生成日時: {html.escape(generated_at)} / 新規: {count}件</p>
+        <p class="subtitle">生成日時: {html.escape(generated_at)} / 新規: {len(today_papers)}件</p>
       </div>
     </header>
 
     <main class="container">
-      <section class="grid" aria-label="論文一覧">
-        {cards_html}
+      {today_section}
+
+      <section class="archive-section" aria-label="過去の日付">
+        <h2 class="section-title">過去のアーカイブ（例: 2026-03-22）</h2>
+        <div class="archive-list">
+          {archive_items}
+        </div>
       </section>
     </main>
 
@@ -147,24 +203,32 @@ def run():
         })
         processed_ids.add(paper.entry_id)
 
-    # 4. レポートの更新（新しい論文がある時のみ実行）
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
-    if not new_papers:
-        print("今日は新しい論文がありませんでした。")
-        index_html = build_index_html([], generated_at)
-        with open("index.html", "w", encoding="utf-8") as f:
-            f.write(index_html)
-        return
+    date_str = datetime.now().strftime("%Y-%m-%d")
 
-    index_html = build_index_html(new_papers, generated_at)
+    archive_dir = Path("archive") / date_str
+    archive_dir.mkdir(parents=True, exist_ok=True)
+
+    # 4. 日付ごとのページを生成
+    archive_index_html = build_archive_page_html(new_papers, date_str, generated_at, "../styles.css")
+    with open(archive_dir / "index.html", "w", encoding="utf-8") as f:
+        f.write(archive_index_html)
+
+    # 5. ルートのトップページを生成（過去アーカイブへの導線）
+    archive_dates = get_archive_dates(Path("archive"))
+    index_html = build_root_index_html(new_papers, generated_at, archive_dates)
     with open("index.html", "w", encoding="utf-8") as f:
         f.write(index_html)
 
-    # 5. 新しい履歴を保存
+    if not new_papers:
+        print("今日は新しい論文がありませんでした（アーカイブページは作成済み）。")
+        return
+
+    # 6. 新しい履歴を保存
     with open(history_file, "w", encoding="utf-8") as f:
         f.write("\n".join(processed_ids))
         
-    print("🎉 index.html と履歴の更新が完了しました！")
+    print("🎉 index.html / archive と履歴の更新が完了しました！")
 
 if __name__ == "__main__":
     run()

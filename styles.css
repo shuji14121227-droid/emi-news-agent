@@ -76,6 +76,10 @@ a {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 16px;
   }
+
+  .archive-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 .card {
@@ -93,6 +97,12 @@ a {
   letter-spacing: 0.01em;
 }
 
+.card__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .card__link {
   display: inline-flex;
   align-items: center;
@@ -107,6 +117,30 @@ a {
 
 .card__link:hover {
   background: rgba(124, 92, 255, 0.18);
+}
+
+.card__url {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+.card__url-label {
+  color: rgba(255, 255, 255, 0.78);
+  font-weight: 650;
+  margin-right: 6px;
+}
+
+.card__url-link {
+  color: rgba(255, 255, 255, 0.92);
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 255, 255, 0.35);
+}
+
+.card__url-link:hover {
+  text-decoration-color: rgba(255, 255, 255, 0.8);
 }
 
 .card__details {
@@ -152,6 +186,57 @@ a {
 .empty__text {
   margin: 0;
   color: var(--muted);
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 13px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.back-link:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.archive-section {
+  padding: 14px 0 30px;
+}
+
+.section-title {
+  margin: 0 0 12px;
+  font-size: 16px;
+  letter-spacing: 0.01em;
+}
+
+.archive-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.archive-item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 13px;
+  text-align: center;
+}
+
+.archive-item:hover {
+  background: rgba(124, 92, 255, 0.14);
+  border-color: rgba(124, 92, 255, 0.35);
 }
 
 .site-footer {
