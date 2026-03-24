@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 DATE_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+IMG_SRC_RE = re.compile(r'<img[^>]+src=["\']([^"\']+)["\']', re.IGNORECASE)
 RSS_GOOGLE_URL = (
     "https://news.google.com/rss/search?q="
     + parse.quote("半導体 OR semiconductor OR chip industry when:1d")
@@ -19,6 +20,9 @@ RSS_FEEDS = [
     {"name": "Google News", "url": RSS_GOOGLE_URL, "max_items": 6},
     {"name": "IEEE Spectrum", "url": "https://spectrum.ieee.org/feeds/feed.rss", "max_items": 6},
 ]
+RSS_NS = {
+    "media": "http://search.yahoo.com/mrss/",
+}
 
 
 def get_archive_dates(archive_dir: Path) -> list[str]:
@@ -64,6 +68,26 @@ def fetch_rss_entries(source_name: str, feed_url: str, max_items: int) -> list[d
         if not title or not link:
             continue
 
+        image_url = ""
+        media_content = item.find("media:content", RSS_NS)
+        if media_content is not None and media_content.get("url"):
+            image_url = media_content.get("url", "").strip()
+
+        if not image_url:
+            media_thumbnail = item.find("media:thumbnail", RSS_NS)
+            if media_thumbnail is not None and media_thumbnail.get("url"):
+                image_url = media_thumbnail.get("url", "").strip()
+
+        if not image_url:
+            enclosure = item.find("enclosure")
+            if enclosure is not None and enclosure.get("url"):
+                image_url = enclosure.get("url", "").strip()
+
+        if not image_url and description:
+            img_match = IMG_SRC_RE.search(description)
+            if img_match:
+                image_url = img_match.group(1).strip()
+
         entries.append(
             {
                 "title": title,
@@ -71,6 +95,7 @@ def fetch_rss_entries(source_name: str, feed_url: str, max_items: int) -> list[d
                 "summary": description if description else "概要なし",
                 "source": source_name,
                 "published": published,
+                "image_url": image_url,
             }
         )
 
@@ -106,8 +131,21 @@ def build_news_card_html(n: dict) -> str:
     summary = html.escape(str(n["summary"]))
     source = html.escape(str(n.get("source", "RSS")))
     published = html.escape(str(n.get("published", "")))
+    image_url_raw = str(n.get("image_url", "")).strip()
+    image_url = html.escape(image_url_raw, quote=True)
+
+    image_block = ""
+    if image_url_raw:
+        image_block = f"""<div class="card__thumb-wrap">
+    <img class="card__thumb" src="{image_url}" alt="{title}" loading="lazy" referrerpolicy="no-referrer" />
+  </div>"""
+    else:
+        image_block = """<div class="card__thumb-wrap card__thumb-wrap--placeholder" aria-hidden="true">
+    <div class="card__thumb-placeholder">No Image</div>
+  </div>"""
 
     return f"""<article class="card card--news">
+  {image_block}
   <h2 class="card__title">{title}</h2>
   <div class="card__meta-row">
     <span class="badge">{source}</span>
